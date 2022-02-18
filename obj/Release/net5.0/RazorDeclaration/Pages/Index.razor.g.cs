@@ -105,10 +105,12 @@ using Microsoft.EntityFrameworkCore;
         }
         #pragma warning restore 1998
 #nullable restore
-#line 58 "C:\Users\xiaom\Desktop\Max\Itransition\WebApplication2\Pages\Index.razor"
+#line 80 "C:\Users\xiaom\Desktop\Max\Itransition\WebApplication2\Pages\Index.razor"
        
     private HubConnection hubConnection;
     private List<Models.Message> messages = new List<Models.Message>();
+    private List<(Models.Message message, bool hidden)> currentMessages = new List<(Models.Message, bool)>();
+    private List<string> dialogs = new List<string>();
 
     private string userInput = string.Empty;
     private string receiverUser = string.Empty;
@@ -124,7 +126,64 @@ using Microsoft.EntityFrameworkCore;
             return;
 
         currentUser = userInput;
+        currentMessages.Clear();
+        GetAllDialogs();
+
         StateHasChanged();
+    }
+
+    void ShowDialogWith(string user)
+    {
+        if (currentDialog != user)
+        {
+            currentDialog = user;
+            ShowMessagesFromCurrentDialog();
+        }
+        else
+        {
+            currentDialog = string.Empty;
+            currentMessages.Clear();
+        }
+
+        StateHasChanged();
+    }
+
+    void ShowMessagesFromCurrentDialog()
+    {
+        if (currentDialog == string.Empty)
+            return;
+
+        currentMessages.Clear();
+        foreach (var m in messages)
+        {
+            if ((m.SenderName == currentDialog && m.ReceiverName == currentUser) ||
+                (m.ReceiverName == currentDialog && m.SenderName == currentUser))
+            {
+                currentMessages.Add((m, true));
+            }
+        }
+    }
+
+    void ShowMessage(Models.Message msg)
+    {
+        int index = currentMessages.FindIndex(m => m.message == msg);
+        currentMessages[index] = (msg, !currentMessages[index].hidden);
+        StateHasChanged();
+    }
+
+    void GetAllDialogs()
+    {
+        dialogs.Clear();
+        foreach (var m in messages)
+        {
+            if (m.ReceiverName == m.SenderName)
+                continue;
+
+            if (m.ReceiverName == currentUser && !dialogs.Contains(m.SenderName))
+                dialogs.Add(m.SenderName);
+            else if (m.SenderName == currentUser && !dialogs.Contains(m.ReceiverName))
+                dialogs.Add(m.ReceiverName);
+        }
     }
 
     protected override async Task OnInitializedAsync()
@@ -187,7 +246,13 @@ using Microsoft.EntityFrameworkCore;
     async Task Send()
     {
         if (currentUser != string.Empty && receiverUser != string.Empty)
+        {
             await hubConnection.SendAsync("SendMessage", currentUser, receiverUser, themeInput, messageInput, DateTime.Now);
+            await Task.Delay(100);
+            GetAllDialogs();
+            ShowMessagesFromCurrentDialog();
+            StateHasChanged();
+        }
     }
 
     public bool IsConnected => hubConnection.State == HubConnectionState.Connected;

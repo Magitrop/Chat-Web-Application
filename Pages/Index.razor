@@ -31,33 +31,56 @@
 </div>
 <button @onclick="Send" disabled="@(!IsConnected)">Отправить</button>
 
-<hr>
+<hr />
+@if (currentUser != string.Empty)
+{
+    <p>Вы вошли как @currentUser</p>
+}
+<hr />
 
-<ul id="messagesList">
-    @foreach (var message in messages)
-    {
-        @if (message.ReceiverName == currentUser || message.SenderName == currentUser)
+<div class="d-flex">
+    <ul id="dialogsList">
+        @foreach (var d in dialogs)
         {
-    <li>
-        Отправитель: @message.SenderName
-        <br />
-        Получатель: @message.ReceiverName
-        <br />
-        Дата отправки: @message.Date
-        <br />
-        Тема: @message.Theme
-        <br />
-        <br />
-        @message.Text
-        <hr />
-    </li>
+            <li>
+                <button @onclick="@(e => ShowDialogWith(d))">Открыть диалог с пользователем @d</button>
+            </li>
         }
-    }
-</ul>
+    </ul>
+    <ul id="messagesList">
+        @foreach (var msg in currentMessages)
+        {
+            @if (msg.hidden)
+            {
+                <li style="cursor: pointer" @onclick="@(e => ShowMessage(msg.message))">
+                    От: @msg.message.SenderName
+                    <br />
+                    Тема: @msg.message.Theme
+                    <hr />
+                </li>
+            }
+            else
+            {
+                <li>
+                    От: @msg.message.SenderName
+                    <br />
+                    Дата отправки: @msg.message.Date
+                    <br />
+                    Тема: @msg.message.Theme
+                    <br />
+                    <br />
+                    @msg.message.Text
+                    <hr />
+                </li>
+            }
+        }
+    </ul>
+</div>
 
 @code {
     private HubConnection hubConnection;
     private List<Models.Message> messages = new List<Models.Message>();
+    private List<(Models.Message message, bool hidden)> currentMessages = new List<(Models.Message, bool)>();
     private List<string> dialogs = new List<string>();
 
     private string userInput = string.Empty;
@@ -74,6 +97,54 @@
             return;
 
         currentUser = userInput;
+        currentMessages.Clear();
+        GetAllDialogs();
+
+        StateHasChanged();
+    }
+
+    void ShowDialogWith(string user)
+    {
+        if (currentDialog != user)
+        {
+            currentDialog = user;
+            ShowMessagesFromCurrentDialog();
+        }
+        else
+        {
+            currentDialog = string.Empty;
+            currentMessages.Clear();
+        }
+
+        StateHasChanged();
+    }
+
+    void ShowMessagesFromCurrentDialog()
+    {
+        if (currentDialog == string.Empty)
+            return;
+
+        currentMessages.Clear();
+        foreach (var m in messages)
+        {
+            if ((m.SenderName == currentDialog && m.ReceiverName == currentUser) ||
+                (m.ReceiverName == currentDialog && m.SenderName == currentUser))
+            {
+                currentMessages.Add((m, true));
+            }
+        }
+    }
+
+    void ShowMessage(Models.Message msg)
+    {
+        int index = currentMessages.FindIndex(m => m.message == msg);
+        currentMessages[index] = (msg, !currentMessages[index].hidden);
+        StateHasChanged();
+    }
+
+    void GetAllDialogs()
+    {
+        dialogs.Clear();
         foreach (var m in messages)
         {
             if (m.ReceiverName == m.SenderName)
@@ -82,10 +153,8 @@
             if (m.ReceiverName == currentUser && !dialogs.Contains(m.SenderName))
                 dialogs.Add(m.SenderName);
             else if (m.SenderName == currentUser && !dialogs.Contains(m.ReceiverName))
-                dialogs.Add(m.SenderName);
+                dialogs.Add(m.ReceiverName);
         }
-
-        StateHasChanged();
     }
 
     protected override async Task OnInitializedAsync()
@@ -148,7 +217,13 @@
     async Task Send()
     {
         if (currentUser != string.Empty && receiverUser != string.Empty)
+        {
             await hubConnection.SendAsync("SendMessage", currentUser, receiverUser, themeInput, messageInput, DateTime.Now);
+            await Task.Delay(100);
+            GetAllDialogs();
+            ShowMessagesFromCurrentDialog();
+            StateHasChanged();
+        }
     }
 
     public bool IsConnected => hubConnection.State == HubConnectionState.Connected;
