@@ -1,0 +1,163 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.SignalR.Client
+@using Microsoft.EntityFrameworkCore;
+@*@inject WebApplication2.Models.MessageDbContext _context*@
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
+
+<div class="form-group">
+    <label>
+        <button @onclick="LoginAs">Войти как</button>
+        <input @bind="userInput" />
+    </label>
+</div>
+<div class="form-group">
+    <label>
+        Получатель:
+        <input @bind="receiverUser" size="50" />
+    </label>
+</div>
+<div class="form-group">
+    <label>
+        Тема:
+        <input @bind="themeInput" size="50" />
+    </label>
+</div>
+<div class="form-group">
+    <label>
+        Сообщение:
+        <textarea @bind="messageInput" />
+    </label>
+</div>
+<button @onclick="Send" disabled="@(!IsConnected)">Отправить</button>
+
+<hr>
+
+<ul id="messagesList">
+    @foreach (var message in messages)
+    {
+        @if (message.ReceiverName == currentUser || message.SenderName == currentUser)
+        {
+    <li>
+        Отправитель: @message.SenderName
+        <br />
+        Получатель: @message.ReceiverName
+        <br />
+        Дата отправки: @message.Date
+        <br />
+        Тема: @message.Theme
+        <br />
+        <br />
+        @message.Text
+        <hr />
+    </li>
+        }
+    }
+</ul>
+
+@code {
+    private HubConnection hubConnection;
+    private List<Models.Message> messages = new List<Models.Message>();
+    private List<string> dialogs = new List<string>();
+
+    private string userInput = string.Empty;
+    private string receiverUser = string.Empty;
+    private string themeInput = string.Empty;
+    private string messageInput = string.Empty;
+
+    private string currentUser = string.Empty;
+    private string currentDialog = string.Empty;
+
+    void LoginAs()
+    {
+        if (userInput == string.Empty)
+            return;
+
+        currentUser = userInput;
+        foreach (var m in messages)
+        {
+            if (m.ReceiverName == m.SenderName)
+                continue;
+
+            if (m.ReceiverName == currentUser && !dialogs.Contains(m.SenderName))
+                dialogs.Add(m.SenderName);
+            else if (m.SenderName == currentUser && !dialogs.Contains(m.ReceiverName))
+                dialogs.Add(m.SenderName);
+        }
+
+        StateHasChanged();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        {
+            var contextOptions = new DbContextOptionsBuilder<Models.MessageDbContext>()
+                .UseSqlServer(Startup.connection)
+                .Options;
+
+            using var context = new Models.MessageDbContext(contextOptions);
+            try
+            {
+                foreach (var m in context.Messages)
+                    messages.Add(m);
+            }
+            catch
+            {
+                base.StateHasChanged();
+            }
+        }
+
+        hubConnection = new HubConnectionBuilder()
+        .WithUrl(NavigationManager.ToAbsoluteUri("/chathub"))
+        .Build();
+
+        hubConnection.On<string, string, string, string, DateTime>("ReceiveMessage",
+        async (fromUser, toUser, theme, text, date) =>
+        {
+            Models.Message msg = new Models.Message
+            {
+                Text = $"{text}",
+                Theme = $"{theme}",
+                ReceiverName = $"{toUser}",
+                SenderName = $"{fromUser}",
+                Date = date
+            };
+            messages.Add(msg);
+
+            var contextOptions = new DbContextOptionsBuilder<Models.MessageDbContext>()
+                .UseSqlServer(Startup.connection)
+                .Options;
+
+            using var context = new Models.MessageDbContext(contextOptions);
+            try
+            {
+                context.Messages.Add(msg);
+                await context.SaveChangesAsync();
+            }
+            catch
+            {
+                base.StateHasChanged();
+            }
+
+            StateHasChanged();
+        });
+
+        await hubConnection.StartAsync();
+    }
+
+    async Task Send()
+    {
+        if (currentUser != string.Empty && receiverUser != string.Empty)
+            await hubConnection.SendAsync("SendMessage", currentUser, receiverUser, themeInput, messageInput, DateTime.Now);
+    }
+
+    public bool IsConnected => hubConnection.State == HubConnectionState.Connected;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+}
